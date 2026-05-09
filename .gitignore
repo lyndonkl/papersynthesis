@@ -1,0 +1,8 @@
+# Raw fetch responses — regeneratable, noisy diffs, not part of the historical record
+ops/paper-synthesizer/.cache/
+
+# macOS / editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
