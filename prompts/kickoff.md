@@ -1,19 +1,19 @@
-# Kickoff prompt — generic entry to the literature-scan project
+I'm working in the papersynthesis literature-scan project. The current working directory is the project root and contains:
 
-Paste this as your first message to start any literature-scan session. Use it when you haven't yet decided whether you want a weekly run, a catch-up, or a thematic query — the coach will detect intent from your next message.
-
----
-
-I'm working in my literature-scan project. The current working directory is the project root and contains:
-
-- `orchestrator.md` — system map for the project
+- `orchestrator.md` — the project's orchestrator agent definition (also installed at `~/.claude/agents/papersynthesis-orchestrator.md` so the Agent tool can spawn it)
 - `shared-context/watchlist.md` — my persistent keyword watchlist (life sciences + CS / ML)
-- `shared-context/source-registry.md` — bioRxiv / medRxiv / PubMed / arXiv endpoints, plus the arXiv categories I want queried
+- `shared-context/source-registry.md` — bioRxiv / medRxiv / PubMed / arXiv endpoints + the arXiv categories I want queried
 - `shared-context/relevance-criteria.md` — keep / drop rules for filtering
-- `shared-context/synthesis-style.md` — how the layered digest should be written
-- `ops/paper-synthesizer/` — where weekly digests get written; subfolder `.cache/` holds raw fetch responses
+- `shared-context/synthesis-style.md` — Pass A within-paper + Pass B across-papers layered-digest rendering rules
+- `ops/paper-extractor/` — per-paper extraction notes (Pass 1 + Pass 2; appended Pass 3 only on explicit deep-read)
+- `ops/paper-synthesizer/` — weekly digests, per-paper Pass A summaries, and a `.cache/` of raw fetches
 - `ops/paper-synthesizer/overrides/{YYYY-WW}.md` — optional per-week keyword overrides
 
-Read `orchestrator.md` first, then invoke the `literature-scan-coach` agent. The coach handles intent detection, window computation, and spawning the `paper-synthesizer` subagent for each run.
+Use the Agent tool with `subagent_type=papersynthesis-orchestrator` to spawn the project's orchestrator and hand this session over to it. Pass it the project context above. The orchestrator will:
 
-I'll tell you in my next message what I want done — a regular weekly run, a multi-week catch-up, an on-demand thematic question, or a re-synthesize from cache. Wait for that message before doing anything that fetches.
+- run its pre-flight check on the project files
+- detect intent from my follow-up message (or ask if ambiguous)
+- fan out subagents per stage — `literature-scan-coach` (search-only), `paper-extractor` × N (Pass 1 + Pass 2), `paper-synthesizer` × N (Pass A per paper) and × 1 (Pass B across papers)
+- exchange context between stages and surface back a single combined report
+
+Wait for me to tell you which run I want before doing any fetches or spawning extraction subagents.

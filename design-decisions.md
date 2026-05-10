@@ -55,15 +55,29 @@ If a topic stops appearing for 5+ weeks and then returns, the agent will treat i
 
 A weekly digest the user won't read is worse than no digest. 25 papers, distributed across 2-5 clusters, is roughly the upper bound of what fits on one screen and still gives the synthesis layer something to say per cluster. When the field genuinely produces more, the right move is to raise the relevance bar, not pad the digest.
 
-## Two agents: literature-scan-coach (entry) + paper-synthesizer (worker)
+## Three agents: literature-scan-coach (orchestrator) + paper-extractor (per-paper) + paper-synthesizer (digest)
 
-Originally this project shipped only `paper-synthesizer` (the worker) plus a static `orchestrator.md` documentation file. That worked but forced the operator to manually compute the window, remember the catch-up loop ordering rule (oldest-first so historical context is consistent), and decide which run type to invoke.
+Originally this project shipped a single `paper-synthesizer` agent that did everything (fetch, filter, cluster, synthesize) plus a static `orchestrator.md` documentation file. That worked but produced thin digests because filtering and clustering operated on raw abstracts.
 
-`literature-scan-coach` is a real orchestrator agent — single entry point, runs the pre-flight check, detects intent (WEEKLY / CATCH_UP / ON_DEMAND / RE_SYNTHESIZE / OUT_OF_SCOPE), computes parameters, and spawns `paper-synthesizer` per run with explicit framing. The split keeps each agent's job small: the coach owns *what to do*, the synthesizer owns *do it*. New paper-related agents (e.g., a single-paper deep-dive) can be added later without changing the operator's UX — the coach picks them up as new intents.
+The current architecture is three agents working in sequence, coordinated by the coach:
+
+- **`literature-scan-coach`** is the only entry point. It detects intent (WEEKLY / CATCH_UP / ON_DEMAND / RE_SYNTHESIZE / DEEP_READ / OUT_OF_SCOPE), computes the window + week tag, performs the search itself (fetches and dedupes from bioRxiv, medRxiv, PubMed, arXiv), then orchestrates the worker agents per stage. Catch-up loops run oldest-first by construction — the operator can't accidentally break continuity tagging.
+- **`paper-extractor`** is spawned per paper. It applies a Three-Pass + Five-Cs reading methodology *internally* (questions are an extraction checklist, not a Socratic dialogue with the operator). Pass 1 inspectional on every paper; Pass 2 content grasp on relevance-filter KEEPs only; Pass 3 deep read only on explicit operator request via DEEP_READ intent. Each subagent has its own context window — enables full-text PDF reading per paper without bloating the orchestrator's context.
+- **`paper-synthesizer`** is spawned once per run with the extraction paths. Pass A translates each paper's extraction into a reader-friendly summary using `layered-reasoning` + `translation-reframing-audience-shift` (lighten cognitive load without dampening the paper's hedging). Pass B clusters the per-paper summaries and writes the layered weekly digest using `layered-reasoning` at across-papers scale.
+
+Why split into three rather than one:
+
+- Filtering and clustering on Pass 1 extractions (Five Cs answers) is meaningfully sharper than on raw abstracts.
+- Per-paper subagents isolate full-text PDF reading from the orchestrator's context.
+- Future expansion is cheap — a single-paper deep-read agent or an ask-my-watchlist agent slots in as a new coach intent without disrupting the operator UX.
+
+## PDF parsing is in scope (Pass 2)
+
+The earlier version listed PDF parsing as out of scope. With paper-extractor's Pass 2, the agent now reads full text via the paper's PDF URL when available (always for arXiv and bioRxiv / medRxiv preprints; sometimes for PubMed via PMC OA). When full text isn't accessible, Pass 2 degrades to abstract-only and flags `full_text_available=false` — Pass A in the synthesizer renders the per-paper summary with reduced confidence in that case, but the rest of the pipeline runs normally.
 
 ## Agents path-agnostic; orchestrator file owns "where"
 
-`literature-scan-coach`, `paper-synthesizer`, and the five supporting skills are in a shareable repo. They contain no absolute paths and no machine-specific assumptions. Anyone can clone them and point them at their own project.
+The three agents and the dozen-plus supporting skills are in a shareable repo. They contain no absolute paths and no machine-specific assumptions. Anyone can clone them and point them at their own project.
 
 This local `orchestrator.md` is the only file that knows where this project lives on disk. If you ever move the folder, you edit one file. If you ever clone this for a second domain (e.g., "papersynthesis-economics"), you copy the structure and write a second orchestrator — no agent changes.
 
