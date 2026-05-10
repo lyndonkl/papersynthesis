@@ -262,7 +262,7 @@ The pipeline below runs in a streaming, lane-parallel shape. Stages are conceptu
 
 ### Search — fan out, one literature-scan-coach per expanded query
 
-Spawn all N coaches in a single batch (multiple Agent tool calls in one turn) for parallel execution.
+Spawn all N coaches in a single batch (multiple Agent tool calls in one turn) for parallel execution. Coaches return their paper-records list directly in their response — no file write at the coach level. (The fetch skills the coach uses internally still cache raw API responses to `.cache/` for re-synthesize / debugging; that's separate and the coach's responsibility, not mine.)
 
 ```
 - [ ] For each query Q in expanded_queries: spawn the Agent tool with
@@ -270,19 +270,23 @@ Spawn all N coaches in a single batch (multiple Agent tool calls in one turn) fo
        Fetch bioRxiv, medRxiv, PubMed, and arXiv for window {window_from}/{window_to}
        using keywords=[Q]. Apply the arXiv category list from
        shared-context/source-registry.md. Dedupe within the four sources for THIS query
-       (DOI first, then normalized title + first-author surname). Write the result list
-       to ops/paper-synthesizer/.cache/{week_tag}-coach-{Q-slug}.json and return that
-       path. Do not run extraction. Do not run synthesis."
+       (DOI first, then normalized title + first-author surname). Return the paper-
+       records list directly in your response as a JSON array — each record carries id,
+       title, authors, abstract, date, source, url, and optional doi / pdf_url. Do not
+       run extraction. Do not run synthesis."
 - [ ] If all N coaches fail, halt and surface. If 1-2 fail, proceed with a partial-
        coverage warning naming the failed queries.
 ```
 
-### Cross-lane dedup + register (orchestrator-direct, as coach results arrive)
+### Cross-lane dedup + register (orchestrator-direct, as coach responses arrive)
 
 ```
-- [ ] For each coach result file, verify it exists and parses as JSON.
-- [ ] For each paper p in the file:
-       - Lookup p.paper_id (or normalized title + first-author) in the registry.
+- [ ] For each coach response, verify it parses as a JSON array of paper records and
+       that each record has the required fields (id, title, authors, abstract, date,
+       source, url). Reject records missing required fields with a logged warning;
+       continue with the rest.
+- [ ] For each paper p in the list:
+       - Lookup p.id (or normalized title + first-author) in the registry.
        - If not present: register with first_lane_seen=Q, matched_queries=[Q],
          status=PENDING_EXTRACTION. This paper is now eligible to flow downstream.
        - If present (matched another lane already): append Q to matched_queries.
@@ -379,11 +383,19 @@ Surface the final report to the operator using the report-back template below. T
 
 ## Verification gates
 
-At every subagent return, before propagating the artifact forward, I verify:
+At every subagent return, before propagating the artifact forward, I verify it. The verification shape depends on whether the subagent returns a file path or returns data directly in its response.
 
-1. The output file the subagent claimed to write actually exists at the returned path.
+**For subagents that return a file path** — `paper-extractor` (per-paper extraction file) and `paper-synthesizer` (per-paper Pass A summary file, and the final Pass B digest file):
+
+1. The file exists at the returned path.
 2. The file is non-empty.
-3. The file parses as the expected format (markdown / JSON) and contains the required sections / fields for the next stage.
+3. The file parses as the expected format (markdown with frontmatter) and contains the required sections / fields for the next stage.
+
+**For subagents that return data directly** — `literature-scan-coach` (returns the paper-records list as a JSON array in its response):
+
+1. The response parses as the expected JSON shape (array of records).
+2. Each record has the required fields (id, title, authors, abstract, date, source, url). Records missing fields are dropped with a logged warning; the rest propagate.
+3. The list is non-empty — or, if empty, the subagent explicitly reported zero results (distinguish from a parse failure or silent error).
 
 If verification fails for one subagent, I do not propagate that artifact. I either re-spawn the subagent (transient failures) or mark the paper / lane as terminally failed and let other in-flight work continue. Verification failures are logged and surfaced in the final report-back so the operator knows what dropped out.
 
@@ -396,7 +408,7 @@ I am the broker between every subagent. Data flow:
 ```
 Gathering + Query expansion (operator) → me      topic, window, style, expanded_queries
 me → search subagents (× N)                       one expanded query each
-search subagents → me                             paper-records JSON file path per query
+search subagents → me                             paper-records JSON list (returned directly in response, no file)
 me (cross-lane dedup + register)                  unified registry; matched_queries propagates
 me → extractor subagents (Pass 1, × unique paper) one paper record + pass=1 each
 extractor subagents → me                          Pass 1 file path
