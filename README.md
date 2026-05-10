@@ -147,7 +147,7 @@ cd papersynthesis    # from wherever you cloned it
 claude
 ```
 
-Then paste the contents of `prompts/kickoff.md` as your first message. It hands you off to the `papersynthesis-orchestrator` agent installed in Step 4. The orchestrator runs the pipeline:
+Then pull `prompts/kickoff.md` into your first message — either paste its contents, or use `@prompts/kickoff.md` if your Claude Code session supports `@`-references. It hands you off to the `papersynthesis-orchestrator` agent installed in Step 4. The orchestrator runs the pipeline:
 
 - pre-flight check on the project files
 - spawns `literature-scan-coach` (search-only) and gets the paper-records list back

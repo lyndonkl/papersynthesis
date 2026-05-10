@@ -1,17 +1,3 @@
-# Kickoff prompt — hand the session over to the project's orchestrator
-
-This is the only prompt you usually need. Paste it as your first message in a Claude Code session that you've started from inside this project's root folder.
-
-It does three things:
-
-1. Sets the working-context for Claude (you're in the papersynthesis project; here's where the watchlist, source-registry, criteria, style, and prior outputs live).
-2. Spawns the `papersynthesis-orchestrator` subagent and hands the conversation off to it.
-3. Stops there — the orchestrator will then ask you (in plain English) what kind of run you want, or detect intent from your follow-up message ("run the weekly digest", "catch me up on 3 weeks", "what's new on diffusion models", "re-run last week from cache", "deep-read the Smith paper from week 19", etc.).
-
-Make sure you've run Step 4 of the README (install `papersynthesis-orchestrator` to `~/.claude/agents/`) at least once on this machine. Otherwise the Agent tool will not find the orchestrator.
-
----
-
 I'm working in the papersynthesis literature-scan project. The current working directory is the project root and contains:
 
 - `orchestrator.md` — the project's orchestrator agent definition (also installed at `~/.claude/agents/papersynthesis-orchestrator.md` so the Agent tool can spawn it)
