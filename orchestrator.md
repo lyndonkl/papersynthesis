@@ -200,7 +200,7 @@ The pipeline is **lane-parallel and streaming**. After Query expansion produces 
 **What each subagent does:**
 
 - **`literature-scan-coach` (× N — one per expanded query)** — search-only. I invoke each with `keywords=[Q]` (a single query, not the union). It fetches bioRxiv / medRxiv / PubMed / arXiv for the window, dedupes within the four sources for that query, returns a paper-records list.
-- **`paper-extractor` (× one per unique paper)** — per-paper structured-extraction worker. Applies the Three-Pass + Five-Cs methodology *internally*. Pass 1 inspectional on every paper that clears cross-lane dedup; Pass 2 content grasp on relevance-filter KEEPs. Each invocation has its own context window, returns a path + one-line summary.
+- **`paper-extractor` (× one per unique paper)** — per-paper structured-extraction worker. Applies the Three-Pass + Five-Cs methodology *internally*. Pass 1 inspectional on every paper that clears cross-lane dedup; Pass 2 content grasp on relevance-filter KEEPs. Each invocation has its own context window. Writes the extraction to a markdown file and returns just the file path; status fields (`passes_completed`, `full_text_available`) live in the file's frontmatter, which I read during verification.
 - **`paper-synthesizer` (per-paper, Pass A — × one per KEEP)** — single-paper translation worker. Reads one extraction file; produces the within-paper layered summary (30K = paper's claim, 3K = argument + evidence, 300ft = specifics with hedging preserved). Returns the per-paper summary file path.
 - **`paper-synthesizer` (across-papers, Pass B — × 1, the join)** — reads all per-paper Pass A summaries across all lanes, clusters them by theme, writes the digest (30K = the through-line, 3K = clusters, 300ft = per-paper bullets). Returns the digest path + 30K paragraph + warnings.
 
@@ -243,7 +243,9 @@ The pipeline below runs in a streaming, lane-parallel shape. Stages are conceptu
 
 ```
 - [ ] Set the window from Gathering. window_from / window_to / week_tag are now fixed
-       for this run.
+       for this run. **week_tag uses ISO 8601 year-week format `YYYY-Www`** with a
+       literal `W` — e.g., `2026-W19`, never `2026-19`. All downstream subagents and
+       file paths use this format; never strip the `W`.
 - [ ] Read shared-context/watchlist.md, source-registry.md, relevance-criteria.md,
        synthesis-style.md.
 - [ ] Read any per-run overrides I wrote during Gathering
@@ -301,11 +303,17 @@ As soon as a paper enters the registry with status=PENDING_EXTRACTION, it can be
 
 ```
 - [ ] For each paper p in the registry with status=PENDING_EXTRACTION: spawn the
-       Agent tool with subagent_type=paper-extractor. Pass: paper_record=p,
-       week_tag, output_root=ops/paper-extractor/, pass=1.
+       Agent tool with subagent_type=paper-extractor. The spawn prompt must pass
+       all four parameters the agent expects, every time:
+         - paper_record: p (the full record from search)
+         - pass: 1
+         - output_root: "ops/paper-extractor/"   ← always pass; the agent does not default
+         - week_tag: the ISO YYYY-Www string from Stage 0 (e.g., "2026-W19")
 - [ ] Spawn in parallel batches (default batch_size=5; tune based on rate limits).
-- [ ] As each extractor returns, verify the Pass 1 file exists at the returned path
-       and is non-empty. Update registry: status=PASS_1.
+- [ ] As each extractor returns a file path, verify: the file exists at that path,
+       is non-empty, and its YAML frontmatter contains passes_completed=[1] (the
+       extractor's status contract — the orchestrator reads it from the file rather
+       than from a structured response envelope). Update registry: status=PASS_1.
        If verification fails, log and mark status=EXTRACTION_FAILED; the paper drops
        out of the pipeline. Other in-flight work continues.
 ```
@@ -330,12 +338,19 @@ I apply the `paper-relevance-filter` skill myself (not via a subagent — it's a
 
 ```
 - [ ] For each paper with status=KEEP: spawn the Agent tool with
-       subagent_type=paper-extractor. Pass: paper_record=p, week_tag,
-       output_root=ops/paper-extractor/, pass=2. The subagent reads the existing
-       Pass 1 file and appends the Pass 2 section.
-- [ ] As each extractor returns, verify Pass 2 file. Update registry:
-       status=PASS_2. If full_text_available=false, tag the registry entry
-       so downstream Pass A operates in reduced-confidence mode.
+       subagent_type=paper-extractor. Same four parameters as Pass 1, with pass=2:
+         - paper_record: p
+         - pass: 2
+         - output_root: "ops/paper-extractor/"
+         - week_tag: the same ISO YYYY-Www string used in Pass 1
+       The subagent reads the existing Pass 1 file at
+       `{output_root}/{week_tag}/{slug}.md` and appends the Pass 2 section.
+- [ ] As each extractor returns a file path, verify: the file exists, is non-empty,
+       and its YAML frontmatter now shows passes_completed=[1,2] and a non-null
+       full_text_available value. Update registry: status=PASS_2. If
+       full_text_available=false (read from frontmatter, not from the response
+       envelope), tag the registry entry so downstream Pass A operates in
+       reduced-confidence mode.
 ```
 
 ### Pass A synthesis — fan out, one paper-synthesizer per KEEP (parallel, as Pass 2 returns)
@@ -389,7 +404,8 @@ At every subagent return, before propagating the artifact forward, I verify it. 
 
 1. The file exists at the returned path.
 2. The file is non-empty.
-3. The file parses as the expected format (markdown with frontmatter) and contains the required sections / fields for the next stage.
+3. The file parses as the expected format (markdown with frontmatter) and contains the required sections for the pass that just ran.
+4. The frontmatter contains the required status fields. For `paper-extractor`: `passes_completed` is updated to include the pass that just ran (`[1]` after Pass 1; `[1,2]` after Pass 2; `[1,2,3]` after Pass 3), and `full_text_available` is non-null after Pass 2 (`true` if the acquisition recipe succeeded, `false` if the extractor fell back to reduced-confidence mode). I read these from the frontmatter — `paper-extractor` returns only the path, never a structured envelope.
 
 **For subagents that return data directly** — `literature-scan-coach` (returns the paper-records list as a JSON array in its response):
 
@@ -432,7 +448,7 @@ No subagent reads another's working notes. The only inter-subagent signal is the
 To add or remove a keyword for one specific week without editing the watchlist, the operator drops a file at:
 
 ```
-ops/paper-synthesizer/overrides/{YYYY-WW}.md
+ops/paper-synthesizer/overrides/{YYYY-Www}.md
 ```
 
 Format:
@@ -472,16 +488,16 @@ papersynthesis/
 │   └── relevance-criteria.md            # keep/drop rules for the relevance filter
 ├── ops/
 │   ├── paper-extractor/
-│   │   └── {YYYY-WW}/
+│   │   └── {YYYY-Www}/
 │   │       └── {slug}.md                # per-paper extractions (Pass 1 + Pass 2 + Pass 3 if deep-read)
 │   └── paper-synthesizer/
-│       ├── {YYYY-WW}-digest.md          # the final digest (Pass B output)
-│       ├── {YYYY-WW}-papers.md          # the full filtered paper list with rationale
-│       ├── {YYYY-WW}/
+│       ├── {YYYY-Www}-digest.md          # the final digest (Pass B output)
+│       ├── {YYYY-Www}-papers.md          # the full filtered paper list with rationale
+│       ├── {YYYY-Www}/
 │       │   └── per-paper/
 │       │       └── {slug}.md            # per-paper translated summaries (Pass A outputs)
-│       ├── overrides/{YYYY-WW}.md       # per-week keyword overrides (optional)
-│       └── .cache/{YYYY-WW}-{src}.json  # raw fetches (gitignored)
+│       ├── overrides/{YYYY-Www}.md       # per-week keyword overrides (optional)
+│       └── .cache/{YYYY-Www}-{src}.json  # raw fetches (gitignored)
 ├── inbox/                               # ad-hoc paper drops; reserved for future single-paper workflows
 └── archive/                             # older digests, manual move only
 ```
@@ -504,7 +520,7 @@ I'm operator-driven, not scheduled. The operator runs me when they want a digest
 - **The per-paper Pass A summaries**: `ops/paper-synthesizer/{week}/per-paper/`. Pass A subagents write; the Pass B subagent reads and may append a closing "why this matters in this run's context" line.
 - **The digest history**: `ops/paper-synthesizer/`. Pass B subagent appends per run; never deletes.
 - **The cache**: `ops/paper-synthesizer/.cache/`. Disposable; the search subagents regenerate. Gitignored.
-- **The overrides for a single run**: `ops/paper-synthesizer/overrides/{YYYY-WW}.md` (and `-style.md`). Operator writes before the run, or I write on their behalf during Gathering; I read during one-time prep.
+- **The overrides for a single run**: `ops/paper-synthesizer/overrides/{YYYY-Www}.md` (and `-style.md`). Operator writes before the run, or I write on their behalf during Gathering; I read during one-time prep.
 
 ---
 
