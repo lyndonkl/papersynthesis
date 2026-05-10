@@ -1,34 +1,30 @@
 # Prompts
 
-Pre-written kickoff prompts you can paste at the start of a Claude session (or reference with `@`) to invoke the `literature-scan-coach` agent for a specific intent.
-
-Each prompt sets enough project context that the coach can route to the right workflow without further clarification, then explicitly asks Claude to invoke the coach.
+A single paste-and-go kickoff prompt that hands a Claude Code session over to the project's orchestrator agent (`papersynthesis-orchestrator`). The orchestrator handles every other intent in plain English from your follow-up message.
 
 ## How to use
 
-Open Claude Code in this project folder so the working directory is correct:
+1. Make sure you've installed `papersynthesis-orchestrator` to `~/.claude/agents/` (see Step 4 of the project's `README.md`).
+2. Open Claude Code from inside the project root so the working directory matches:
+   ```
+   cd path/to/papersynthesis
+   claude
+   ```
+3. Paste the contents of [`kickoff.md`](kickoff.md) as your first message. Or reference it with `@prompts/kickoff.md` if your Claude Code session supports `@`-references.
+4. The orchestrator will load project context and pause, waiting for you to describe what you want.
+5. Say what you want, in plain English:
+   - "Run the weekly paper digest." → WEEKLY intent
+   - "Catch me up on the last 3 weeks." → CATCH_UP intent
+   - "What's new on diffusion models in the last 14 days?" → ON_DEMAND intent
+   - "Re-run last week from cache. I just edited the relevance criteria." → RE_SYNTHESIZE intent
+   - "Deep-read the Smith et al. paper from week 19." → DEEP_READ intent
 
-```
-cd /Users/kushaldsouza/Documents/Thinking/papersynthesis
-claude
-```
+The orchestrator detects the intent, fans out the right subagents (search → extract → synthesize), and surfaces a combined report when done.
 
-Then either:
-- Paste the contents of the relevant prompt file as your first message, or
-- Reference it with `@prompts/<file>.md` if your Claude Code session supports `@`-references.
+## Why only one prompt
 
-If you're not sure which prompt to use, start with `kickoff.md` — it gives the coach enough context to detect intent from a follow-up message.
+Earlier versions of this project shipped intent-specific prompts (`weekly.md`, `catchup.md`, etc.) that each invoked a worker agent directly with explicit framing. With the project-level orchestrator agent, that explicit framing happens inside the orchestrator's intent-detection logic — written into `orchestrator.md` once, applied at runtime. The prompts collapsed to one.
 
-## Available prompts
+## Editing this prompt
 
-| File | When to use |
-|---|---|
-| [`kickoff.md`](kickoff.md) | Generic entry. Sets project context and lets the coach decide what to run from your follow-up. |
-| [`weekly.md`](weekly.md) | Standard Monday-morning weekly digest. The 90% case. |
-| [`catchup.md`](catchup.md) | You missed weeks and want to back-fill — fill in N before pasting. |
-| [`on-demand.md`](on-demand.md) | Thematic question outside the regular cadence — fill in topic and window. |
-| [`re-synthesize.md`](re-synthesize.md) | Re-render an existing digest from cached fetches after editing relevance-criteria.md or synthesis-style.md. |
-
-## Editing these prompts
-
-Treat them as templates you tune over time. If you find yourself rewriting the same context every week, fold the addition into `kickoff.md` so future sessions inherit it. The coach reads `orchestrator.md` and `shared-context/` at startup, so anything that belongs as durable project context should go in one of those files instead of in a prompt.
+If you find yourself rewriting the same context every session, fold the addition into `kickoff.md`. Anything that belongs as durable project context goes in `orchestrator.md` or `shared-context/` instead — both are read by the orchestrator at startup.
