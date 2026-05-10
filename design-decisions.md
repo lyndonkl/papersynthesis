@@ -2,11 +2,13 @@
 
 Why this project is shaped the way it is. Useful when you (or future-you) wonder "why didn't we just…"
 
-## Sources: bioRxiv + medRxiv + PubMed
+## Sources: bioRxiv + medRxiv + PubMed + arXiv
 
-bioRxiv covers life sciences preprints; medRxiv covers clinical / health-sciences preprints (same operator, same API shape, different endpoint). PubMed is where the published version eventually lands. Reading all three gets you the earliest signal (preprint) plus the validated version (PubMed) without missing either.
+bioRxiv covers life sciences preprints; medRxiv covers clinical / health-sciences preprints (same operator, same API shape, different endpoint). PubMed is where the published version eventually lands. arXiv covers CS / ML / stats / math / physics / quantitative-biology preprints — the watchlist crosses domains, so the CS-side coverage is necessary, not optional.
 
-We deliberately *exclude* arXiv q-bio in v1 — too much noise, and arXiv preprints in life sciences typically also get posted to bioRxiv. If you find we're missing computational-biology methods work, add arXiv q-bio later.
+Reading all four sources gets you both the earliest signal (preprint) and the validated version (PubMed) for life-sciences work, plus full CS / ML coverage that bioRxiv and PubMed barely touch.
+
+The arXiv category set is operator-controlled in `shared-context/source-registry.md`. The default is CS / ML focused (`cs.LG, cs.CL, cs.CV, cs.AI, cs.NE, stat.ML`) — adjust upward (q-bio, math, physics) when the watchlist drifts that way, or set to `null` to scan all of arXiv when the keyword filter is tight enough to handle the noise.
 
 ## Cadence: Monday morning, 7-day lookback
 
@@ -53,9 +55,15 @@ If a topic stops appearing for 5+ weeks and then returns, the agent will treat i
 
 A weekly digest the user won't read is worse than no digest. 25 papers, distributed across 2-5 clusters, is roughly the upper bound of what fits on one screen and still gives the synthesis layer something to say per cluster. When the field genuinely produces more, the right move is to raise the relevance bar, not pad the digest.
 
-## Agent path-agnostic; orchestrator owns "where"
+## Two agents: literature-scan-coach (entry) + paper-synthesizer (worker)
 
-The `paper-synthesizer` agent and its four supporting skills are in a shareable repo. They contain no absolute paths and no machine-specific assumptions. Anyone can clone them and point them at their own project.
+Originally this project shipped only `paper-synthesizer` (the worker) plus a static `orchestrator.md` documentation file. That worked but forced the operator to manually compute the window, remember the catch-up loop ordering rule (oldest-first so historical context is consistent), and decide which run type to invoke.
+
+`literature-scan-coach` is a real orchestrator agent — single entry point, runs the pre-flight check, detects intent (WEEKLY / CATCH_UP / ON_DEMAND / RE_SYNTHESIZE / OUT_OF_SCOPE), computes parameters, and spawns `paper-synthesizer` per run with explicit framing. The split keeps each agent's job small: the coach owns *what to do*, the synthesizer owns *do it*. New paper-related agents (e.g., a single-paper deep-dive) can be added later without changing the operator's UX — the coach picks them up as new intents.
+
+## Agents path-agnostic; orchestrator file owns "where"
+
+`literature-scan-coach`, `paper-synthesizer`, and the five supporting skills are in a shareable repo. They contain no absolute paths and no machine-specific assumptions. Anyone can clone them and point them at their own project.
 
 This local `orchestrator.md` is the only file that knows where this project lives on disk. If you ever move the folder, you edit one file. If you ever clone this for a second domain (e.g., "papersynthesis-economics"), you copy the structure and write a second orchestrator — no agent changes.
 

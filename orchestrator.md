@@ -1,6 +1,8 @@
 # papersynthesis — Orchestrator
 
-This is the local control file for the weekly paper-synthesis project. It is the only place absolute paths live. The `paper-synthesizer` agent (in the shareable Claude Code agents repo) is path-agnostic; this file tells you how to invoke it correctly against this folder.
+This is the local control file for the weekly literature-scan project. It is the only place absolute paths live. The agents that run this project (`literature-scan-coach` as the entry point, `paper-synthesizer` as its worker) are path-agnostic and live in the shareable Claude Code agents repo; this file tells you how to invoke them correctly against this folder.
+
+The recommended way to start a session is to paste one of the prompts in `prompts/` — see `prompts/README.md` for the menu. The prompts set project context and explicitly invoke `literature-scan-coach`, which then routes to the right workflow.
 
 ---
 
@@ -27,31 +29,34 @@ This is the working directory the agent must be invoked in. The agent never reso
 
 ## How to run the weekly digest
 
-The clean invocation. Run from anywhere:
+The clean invocation. Open Claude Code in the project folder and paste a prompt:
 
 ```
 cd /Users/kushaldsouza/Documents/Thinking/papersynthesis
 claude
-> Run the paper-synthesizer agent for this week.
+# then paste prompts/weekly.md (or prompts/kickoff.md if you want to decide the run type from your follow-up)
 ```
 
-The agent will:
+What happens:
 
-1. Confirm `orchestrator.md`, `shared-context/watchlist.md`, and `ops/paper-synthesizer/` are visible in the cwd.
-2. Compute the window (today minus 7 days through yesterday, inclusive) and ISO week tag.
-3. Read watchlist, source-registry, relevance-criteria, synthesis-style, this-week's overrides if any, and the last 4 weekly digests.
-4. Fetch bioRxiv + medRxiv + PubMed for the window.
-5. Filter, cluster, synthesize.
-6. Write the two digest files + the cache.
-7. Report path + counts + top-3 highlights.
+1. The `literature-scan-coach` agent runs its pre-flight check (confirms `orchestrator.md`, `shared-context/watchlist.md`, `shared-context/source-registry.md`, and `ops/paper-synthesizer/` are visible).
+2. It detects intent (WEEKLY / CATCH_UP / ON_DEMAND / RE_SYNTHESIZE / OUT_OF_SCOPE) from your prompt.
+3. For a weekly run, it computes the window (today minus 7 days through yesterday, inclusive) and ISO week tag.
+4. It spawns the `paper-synthesizer` subagent with explicit per-run parameters (window, week tag, run type).
+5. The subagent reads watchlist + source-registry + relevance-criteria + synthesis-style + last-4-weeks digests, fetches bioRxiv + medRxiv + PubMed + arXiv, filters, clusters, synthesizes, and writes the two digest files + cache.
+6. The coach surfaces back the digest path, kept/dropped counts, the 30,000-ft preview, and any warnings.
 
 ### Catch-up runs
 
-If you missed weeks, ask:
+Use `prompts/catchup.md` and fill in `N`. The coach runs N independent passes oldest-first so each newer pass has the prior digests as historical context.
 
-> Run paper-synthesizer for the last 3 weeks, oldest first.
+### On-demand thematic queries
 
-The agent runs N independent passes so each newer pass has the prior digests as historical context.
+Use `prompts/on-demand.md` and fill in topic + window. The coach writes a one-shot per-week override file and runs the subagent against it; the persistent watchlist is not modified.
+
+### Re-synthesize after editing criteria
+
+Use `prompts/re-synthesize.md`. The coach skips fetches and re-runs filter + cluster + synthesis from the `.cache/` JSON, so you can see what your relevance-criteria or synthesis-style edits actually changed.
 
 ### Per-week overrides
 
@@ -92,9 +97,16 @@ papersynthesis/
 ├── README.md                            # plain-English overview, recent digests index
 ├── orchestrator.md                      # this file
 ├── design-decisions.md                  # why these choices
+├── prompts/                             # paste-and-go session kickoff prompts
+│   ├── README.md                        # menu of prompts
+│   ├── kickoff.md                       # generic entry; coach decides intent from follow-up
+│   ├── weekly.md                        # standard Monday weekly run
+│   ├── catchup.md                       # back-fill N missed weeks (oldest-first)
+│   ├── on-demand.md                     # off-cadence thematic question
+│   └── re-synthesize.md                 # re-render an existing digest from cache
 ├── shared-context/
 │   ├── watchlist.md                     # persistent keywords (you own this)
-│   ├── source-registry.md               # bioRxiv/medRxiv/PubMed endpoints + query notes
+│   ├── source-registry.md               # bioRxiv/medRxiv/PubMed/arXiv endpoints + query notes
 │   ├── synthesis-style.md               # how the layered digest is structured
 │   └── relevance-criteria.md            # keep/drop rules for the relevance filter
 ├── ops/
@@ -103,24 +115,32 @@ papersynthesis/
 │       ├── {YYYY-WW}-papers.md          # the full filtered paper list
 │       ├── overrides/{YYYY-WW}.md       # per-week keyword overrides (optional)
 │       └── .cache/{YYYY-WW}-{src}.json  # raw fetches
-├── inbox/                               # ad-hoc paper drops (out-of-scope for v1 agent)
+├── inbox/                               # ad-hoc paper drops (out-of-scope for v1 agents)
 └── archive/                             # older digests, manual move only
 ```
 
 ---
 
-## Agent + skills (lives in the shareable repo)
+## Agents + skills (lives in the shareable repo)
 
-| Component                  | Path                                                                                            |
-| -------------------------- | ----------------------------------------------------------------------------------------------- |
-| `paper-synthesizer` agent  | `~/Documents/Projects/claude/agents/paper-synthesizer.md`                                       |
-| `fetch-preprint-recent`    | `~/Documents/Projects/claude/skills/fetch-preprint-recent/`                                     |
-| `fetch-pubmed-recent`      | `~/Documents/Projects/claude/skills/fetch-pubmed-recent/`                                       |
-| `paper-relevance-filter`   | `~/Documents/Projects/claude/skills/paper-relevance-filter/`                                    |
-| `paper-cluster-by-theme`   | `~/Documents/Projects/claude/skills/paper-cluster-by-theme/`                                    |
-| `layered-reasoning`        | `~/Documents/Projects/claude/skills/layered-reasoning/` (existing, used for synthesis)          |
+| Component                    | Path                                                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- |
+| `literature-scan-coach`      | `~/Documents/Projects/claude/agents/literature-scan-coach.md` (entry point — invoked by prompts)|
+| `paper-synthesizer`          | `~/Documents/Projects/claude/agents/paper-synthesizer.md` (worker, spawned by the coach)        |
+| `fetch-preprint-recent`      | `~/Documents/Projects/claude/skills/fetch-preprint-recent/`                                     |
+| `fetch-pubmed-recent`        | `~/Documents/Projects/claude/skills/fetch-pubmed-recent/`                                       |
+| `fetch-arxiv-recent`         | `~/Documents/Projects/claude/skills/fetch-arxiv-recent/`                                        |
+| `paper-relevance-filter`     | `~/Documents/Projects/claude/skills/paper-relevance-filter/`                                    |
+| `paper-cluster-by-theme`     | `~/Documents/Projects/claude/skills/paper-cluster-by-theme/`                                    |
+| `layered-reasoning`          | `~/Documents/Projects/claude/skills/layered-reasoning/` (existing, used for synthesis)          |
 
-The agent and skills are intentionally portable — no absolute paths, no machine-specific assumptions. They work for anyone who clones the agent repo and writes their own orchestrator pointing at their own project folder.
+For Claude Code to discover these at runtime, they must be in `~/.claude/agents/` and `~/.claude/skills/` — not just the source-of-truth git repo at `~/Documents/Projects/claude/`. Three install options, in order of preference:
+
+- **Plugin install** (cleanest): `/plugin install thinking-frameworks-skills` from the lyndonkl/claude marketplace.
+- **Symlink** (always-current): `ln -s ~/Documents/Projects/claude/agents/literature-scan-coach.md ~/.claude/agents/literature-scan-coach.md` and equivalent for `paper-synthesizer.md` and the five skills folders.
+- **Copy** (manual): `cp` after each merge.
+
+The agents and skills are intentionally portable — no absolute paths, no machine-specific assumptions. They work for anyone who clones the agent repo and writes their own orchestrator pointing at their own project folder.
 
 ---
 
