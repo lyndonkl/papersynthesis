@@ -6,10 +6,11 @@ Each Monday: 1 digest, 2-5 thematic clusters, ≤25 papers worth your attention,
 
 ## Architecture (at a glance)
 
-You invoke a single agent — `papersynthesis-orchestrator` (defined in this repo at `orchestrator.md`). It owns the project's context and fans out subagents per stage:
+You load the orchestrator contract (defined in this repo at `orchestrator.md`) into your **main** Claude Code conversation via the kickoff prompt. That main conversation runs the pipeline directly — fanning out subagents per stage. The orchestrator is **not** registered as a subagent and is **not** spawned via the `Agent` tool, because the Claude Code harness strips the `Agent` (spawn) tool from any agent that is itself running as a subagent. Running the orchestrator in the main thread is what gives it the spawn primitive it needs to fan anything out.
 
 ```
-            papersynthesis-orchestrator (this project's agent — entry point, owns context exchange)
+            orchestrator.md (loaded into your main Claude Code conversation
+                             via prompts/kickoff.md — owns context + fan-out)
                           │
             ┌─────────────┼──────────────────────────┐
             ▼             ▼                          ▼
@@ -17,20 +18,20 @@ You invoke a single agent — `papersynthesis-orchestrator` (defined in this rep
        Search         Extract                  Synthesize
 
   literature-     paper-extractor       paper-synthesizer
-  scan-coach      × N (per paper)       × N per paper (Pass A)
-  (search-only)   Pass 1 every paper    × 1 across papers (Pass B)
+  scan-coach      × N (per paper)       × N per paper (Mode A)
+  (search-only)   Pass 1 every paper    × 1 across papers (Mode B)
                   Pass 2 only on KEEPs
 
   returns:        appends to            writes per-paper summaries
   paper records   ops/paper-extractor/  + the weekly digest
 ```
 
-- **`papersynthesis-orchestrator`** — defined in this repo at `orchestrator.md`. Project-specific entry point. Reads project context (watchlist, source-registry, relevance-criteria, synthesis-style, last-4-weeks digests), runs pre-flight, fans out subagents, exchanges context between stages, surfaces the final report.
+- **Orchestrator (`orchestrator.md`)** — the contract this repo ships. Loaded into your main Claude Code conversation by `prompts/kickoff.md`; not a registered subagent. Reads project context (watchlist, source-registry, relevance-criteria, synthesis-style, last-4-weeks digests), runs pre-flight, fans out subagents in parallel via single-message multi-tool-use, brokers context between stages, surfaces the final report.
 - **`literature-scan-coach`** — generic search/retrieve subagent. Invoked by the orchestrator in search-only mode: fetches bioRxiv / medRxiv / PubMed / arXiv, dedupes, returns the paper-records list.
 - **`paper-extractor`** — per-paper structured-extraction worker, spawned in parallel. Applies a Three-Pass + Five-Cs reading methodology *internally* (questions are the agent's checklist; they're not asked of you). Pass 1 inspectional on every paper; Pass 2 content-grasp on relevance-filter KEEPs; Pass 3 only on explicit operator request.
-- **`paper-synthesizer`** — synthesis worker, spawned in two modes by the orchestrator. Pass A: per-paper, in parallel — translates each extraction into a reader-friendly summary (lighten cognitive load, preserve hedging). Pass B: one invocation across all per-paper outputs — clusters by theme and writes the layered weekly digest.
+- **`paper-synthesizer`** — synthesis worker, spawned in two modes by the orchestrator. Mode A: per-paper, in parallel — translates each extraction into a reader-friendly summary (lighten cognitive load, preserve hedging). Mode B: one invocation across all per-paper outputs — clusters by theme and writes the layered weekly digest.
 
-`papersynthesis-orchestrator` lives in this repo (project-specific). The other three agents and the supporting skills are domain-neutral and live in the [`lyndonkl/claude`](https://github.com/lyndonkl/claude) repo.
+`orchestrator.md` lives in this repo (project-specific) and is read by the main conversation, not installed as an agent. The other three subagents and the supporting skills are domain-neutral and live in the [`lyndonkl/claude`](https://github.com/lyndonkl/claude) repo — those **do** need to be installed in `~/.claude/agents/` (and `~/.claude/skills/`) so the orchestrator can spawn them via the `Agent` tool. See Step 2 below.
 
 ---
 
@@ -95,35 +96,7 @@ git clone https://github.com/lyndonkl/papersynthesis.git
 cd papersynthesis
 ```
 
-### 4. Install the project's orchestrator as an agent
-
-This project ships its own orchestrator agent at `orchestrator.md` (project root). It's the entry point — the prompts in `prompts/` invoke it. For Claude Code to discover it as an agent, you need it in `~/.claude/agents/`. Two options:
-
-**Symlink (always-current with the repo).** Best if you `git pull` periodically:
-
-```bash
-mkdir -p ~/.claude/agents
-ln -sf "$(pwd)/orchestrator.md" ~/.claude/agents/papersynthesis-orchestrator.md
-```
-
-**Copy.** Simpler, but you'll need to re-copy after any changes:
-
-```bash
-mkdir -p ~/.claude/agents
-cp orchestrator.md ~/.claude/agents/papersynthesis-orchestrator.md
-```
-
-The agent's YAML `name` field is `papersynthesis-orchestrator`, which is what Claude Code uses internally. The filename should match.
-
-Verify with:
-
-```bash
-ls ~/.claude/agents/papersynthesis-orchestrator.md
-```
-
-You should see the file (or symlink). After this step, the orchestrator agent is invocable from any Claude Code session, but it expects the working directory to be this project root — see Step 6.
-
-### 5. Configure
+### 4. Configure
 
 Three files live under `shared-context/`. You **must** edit at least the watchlist; the others have sensible defaults you can tune later.
 
@@ -138,36 +111,38 @@ Open `shared-context/watchlist.md` and replace the placeholder keywords with top
 
 If your interests are CS / ML-leaning, skim the arXiv category list in `source-registry.md` (default is `cs.LG, cs.CL, cs.CV, cs.AI, cs.NE, stat.ML`) and adjust if your watchlist drifts (e.g., add `q-bio.QM` for computational biology).
 
-### 6. Run the weekly digest
+### 5. Run the weekly digest
 
-Always start Claude Code from inside the project root so the working directory matches the agents' relative paths:
+Always start Claude Code from inside the project root so the working directory matches the orchestrator's relative paths:
 
 ```bash
 cd papersynthesis    # from wherever you cloned it
 claude
 ```
 
-Then pull `prompts/kickoff.md` into your first message — either paste its contents, or use `@prompts/kickoff.md` if your Claude Code session supports `@`-references. It hands you off to the `papersynthesis-orchestrator` agent installed in Step 4. The orchestrator runs the pipeline:
+Then paste `prompts/kickoff.md` into your first message — either paste its contents directly, or use `@prompts/kickoff.md` if your Claude Code session supports `@`-references. The kickoff prompt instructs the main conversation to read `orchestrator.md` from the project root and run the contract directly (the main thread *becomes* the orchestrator). From there the pipeline is:
 
-- pre-flight check on the project files
-- spawns `literature-scan-coach` (search-only) and gets the paper-records list back
-- spawns `paper-extractor` Pass 1 in parallel, one subagent per paper
+- pre-flight check on the project files (and the `Agent` tool's availability)
+- gathers operator intent (topic / window / digest shape) — asks once if anything is ambiguous
+- query expansion → operator approval
+- spawns `literature-scan-coach` × N in parallel (one per expanded query, all in a single message)
+- spawns `paper-extractor` Pass 1 in parallel as papers register
 - applies the relevance filter on Pass 1 outputs
 - spawns `paper-extractor` Pass 2 in parallel for KEEPs
-- spawns `paper-synthesizer` Pass A in parallel, one per kept paper (per-paper translation)
-- spawns one `paper-synthesizer` Pass B (across all per-paper outputs → clustered weekly digest)
+- spawns `paper-synthesizer` Mode A in parallel, one per kept paper (per-paper translation)
+- spawns one `paper-synthesizer` Mode B across all per-paper outputs (clustered digest — the only barrier)
 - reports back: digest path, kept / dropped counts, the 30K-ft preview paragraph, any warnings
 
 Outputs land at:
 
-- `ops/paper-synthesizer/{YYYY-WW}-digest.md` — the digest you read
-- `ops/paper-synthesizer/{YYYY-WW}-papers.md` — the full filtered paper list with rationale
-- `ops/paper-synthesizer/{YYYY-WW}/per-paper/{slug}.md` — per-paper Pass A translated summaries
-- `ops/paper-extractor/{YYYY-WW}/{slug}.md` — per-paper extraction notes (Pass 1 + Pass 2)
+- `ops/paper-synthesizer/digests/{YYYY-Www}-digest.md` — the digest you read
+- `ops/paper-synthesizer/{YYYY-Www}-papers.md` — the full filtered paper list with rationale
+- `ops/paper-synthesizer/{YYYY-Www}/per-paper/{slug}.md` — per-paper Mode A translated summaries
+- `ops/paper-extractor/{YYYY-Www}/{slug}.md` — per-paper extraction notes (Pass 1 + Pass 2)
 
-### 7. Other run types
+### 6. Other run types
 
-The kickoff prompt is the only one you need. After it hands the session over to the orchestrator, describe what you want in plain English:
+The kickoff prompt is the only one you need. After it hands the session over to the orchestrator contract, describe what you want in plain English:
 
 - "Run the weekly paper digest." → WEEKLY
 - "Catch me up on the last 3 weeks." → CATCH_UP (oldest-first; non-negotiable)
