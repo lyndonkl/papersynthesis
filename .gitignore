@@ -1,5 +1,6 @@
 # Raw fetch responses — regeneratable, noisy diffs, not part of the historical record
 ops/paper-synthesizer/.cache/
+ops/paper-extractor/.cache/
 
 # macOS / editor noise
 .DS_Store
